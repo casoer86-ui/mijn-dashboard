@@ -1,3 +1,4 @@
+
 """
 Markt & Portfolio Dashboard
 ----------------------------
@@ -18,6 +19,13 @@ import os
 from datetime import datetime
 
 st.set_page_config(page_title="Markt & Portfolio Dashboard", layout="wide", page_icon="📊")
+
+# OpenSea vereist tegenwoordig een (gratis) API key. Zet 'm in Streamlit Cloud
+# onder je app -> Settings -> Secrets als:  OPENSEA_API_KEY = "jouw_key_hier"
+try:
+    OPENSEA_API_KEY = st.secrets.get("OPENSEA_API_KEY", "")
+except Exception:
+    OPENSEA_API_KEY = ""
 
 PORTFOLIO_FILE = "portfolio.json"
 NFT_COLLECTIONS = {
@@ -88,23 +96,28 @@ def get_fear_greed():
 
 
 @st.cache_data(ttl=900)
-def get_nft_floor_prices():
-    """Reservoir's publieke API, geen key nodig voor lage volumes.
-    Documentatie: https://docs.reservoir.tools/reference/getcollectionsv7
+def get_nft_floor_prices(eth_usd_price):
+    """OpenSea API v2 - vereist een (gratis) API key in de x-api-key header.
+    Documentatie: https://docs.opensea.io/reference/get_collection_stats
+    Floor price komt terug in de collectie's eigen munt (meestal ETH);
+    USD-waarde wordt hier berekend via de actuele ETH-koers.
     """
     results = {}
+    headers = {"accept": "application/json"}
+    if OPENSEA_API_KEY:
+        headers["x-api-key"] = OPENSEA_API_KEY
     for slug, name in NFT_COLLECTIONS.items():
         try:
             r = requests.get(
-                "https://api.reservoir.tools/collections/v7",
-                params={"slug": slug},
-                headers={"accept": "*/*"},
+                f"https://api.opensea.io/api/v2/collections/{slug}/stats",
+                headers=headers,
                 timeout=10,
             ).json()
-            floor = r["collections"][0]["floorAsk"]["price"]["amount"]["native"]
-            results[name] = floor
+            floor_eth = r["total"]["floor_price"]
+            floor_usd = floor_eth * eth_usd_price if (floor_eth and eth_usd_price) else None
+            results[name] = (floor_eth, floor_usd)
         except Exception:
-            results[name] = None
+            results[name] = (None, None)
     return results
 
 
@@ -171,10 +184,19 @@ col3.metric("Fear & Greed", f"{fng_value}" if fng_value else "n.b.", fng_label)
 st.divider()
 
 st.subheader("🖼️ NFT Floor Prices")
-nft_prices = get_nft_floor_prices()
+if not OPENSEA_API_KEY:
+    st.warning(
+        "Geen OpenSea API key ingesteld — NFT-prijzen kunnen niet worden opgehaald. "
+        "Vraag een gratis key aan via de OpenSea developer portal en zet 'm in "
+        "je app-instellingen onder Secrets als OPENSEA_API_KEY."
+    )
+eth_price = crypto_prices.get("ETH", (None, None))[0]
+nft_prices = get_nft_floor_prices(eth_price)
 nft_cols = st.columns(len(nft_prices) or 1)
-for col, (name, price) in zip(nft_cols, nft_prices.items()):
-    col.metric(name, f"{price:.2f} ETH" if price else "n.b.")
+for col, (name, (floor_eth, floor_usd)) in zip(nft_cols, nft_prices.items()):
+    label = f"{floor_eth:.3f} ETH" if floor_eth else "n.b."
+    sub = f"${floor_usd:,.0f}" if floor_usd else None
+    col.metric(name, label, sub)
 
 st.divider()
 
