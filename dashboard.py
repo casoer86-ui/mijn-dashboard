@@ -25,6 +25,15 @@ NFT_COLLECTIONS = {
     "boredapeyachtclub": "Bored Ape Yacht Club",
     "cryptopunks": "CryptoPunks",
     "pudgypenguins": "Pudgy Penguins",
+    "cryptodickbutts-s3": "CryptoDickbutts",
+}
+
+# CoinGecko id -> weergavenaam, voor de crypto-prijzenrij bovenaan
+CRYPTO_TICKERS = {
+    "bitcoin": "BTC",
+    "ethereum": "ETH",
+    "solana": "SOL",
+    "sui": "SUI",
 }
 
 # ---------------------------------------------------------------------------
@@ -32,16 +41,27 @@ NFT_COLLECTIONS = {
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)  # 5 minuten cache, scheelt onnodige calls
-def get_btc_price():
+def get_crypto_prices():
+    """Haalt in één call de prijs + 24u-verandering op voor alle CRYPTO_TICKERS."""
     try:
         r = requests.get(
             "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": "bitcoin", "vs_currencies": "usd", "include_24hr_change": "true"},
+            params={
+                "ids": ",".join(CRYPTO_TICKERS.keys()),
+                "vs_currencies": "usd",
+                "include_24hr_change": "true",
+            },
             timeout=10,
         ).json()
-        return r["bitcoin"]["usd"], r["bitcoin"].get("usd_24h_change", 0)
+        result = {}
+        for coin_id, label in CRYPTO_TICKERS.items():
+            if coin_id in r:
+                result[label] = (r[coin_id]["usd"], r[coin_id].get("usd_24h_change", 0))
+            else:
+                result[label] = (None, None)
+        return result
     except Exception:
-        return None, None
+        return {label: (None, None) for label in CRYPTO_TICKERS.values()}
 
 
 @st.cache_data(ttl=300)
@@ -128,19 +148,25 @@ def get_price_for_asset(symbol: str):
 st.title("📊 Markt & Portfolio Dashboard")
 st.caption(f"Laatst bijgewerkt: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
 
-btc_price, btc_change = get_btc_price()
+crypto_prices = get_crypto_prices()
 sp500, sp500_change = get_index_price("^GSPC")
 nasdaq, nasdaq_change = get_index_price("^IXIC")
 fng_value, fng_label = get_fear_greed()
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("BTC", f"${btc_price:,.0f}" if btc_price else "n.b.",
-            f"{btc_change:+.2f}%" if btc_change is not None else None)
-col2.metric("S&P 500", f"{sp500:,.0f}" if sp500 else "n.b.",
+st.subheader("💰 Crypto")
+crypto_cols = st.columns(len(CRYPTO_TICKERS))
+for col, label in zip(crypto_cols, CRYPTO_TICKERS.values()):
+    price, change = crypto_prices[label]
+    col.metric(label, f"${price:,.2f}" if price else "n.b.",
+               f"{change:+.2f}%" if change is not None else None)
+
+st.subheader("📈 Markten")
+col1, col2, col3 = st.columns(3)
+col1.metric("S&P 500", f"{sp500:,.0f}" if sp500 else "n.b.",
             f"{sp500_change:+.2f}%" if sp500_change is not None else None)
-col3.metric("Nasdaq", f"{nasdaq:,.0f}" if nasdaq else "n.b.",
+col2.metric("Nasdaq", f"{nasdaq:,.0f}" if nasdaq else "n.b.",
             f"{nasdaq_change:+.2f}%" if nasdaq_change is not None else None)
-col4.metric("Fear & Greed", f"{fng_value}" if fng_value else "n.b.", fng_label)
+col3.metric("Fear & Greed", f"{fng_value}" if fng_value else "n.b.", fng_label)
 
 st.divider()
 
