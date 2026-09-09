@@ -1,5 +1,5 @@
-streamlit>=1.32
+treamlit>=1.32
 requests
 yfinance
 plotly
-pandas
+pandass
