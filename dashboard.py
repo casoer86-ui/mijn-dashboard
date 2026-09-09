@@ -1,11 +1,10 @@
-"""
-Markt & Portfolio Dashboard
+Markt Overzicht
 ----------------------------
 Draai lokaal met:   streamlit run dashboard.py
 Hosten (gratis):    https://streamlit.io/cloud  (koppel een GitHub-repo)
 
 Benodigde packages (zet in requirements.txt):
-    streamlit
+    streamlit>=1.32
     requests
     yfinance
     plotly
@@ -17,11 +16,10 @@ import requests
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import json
 import os
 from datetime import datetime
 
-st.set_page_config(page_title="Markt & Portfolio Dashboard", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Markt Overzicht", layout="wide", page_icon="📊")
 
 # OpenSea vereist een (gratis) API key. Zet 'm in Streamlit Cloud
 # onder je app -> Settings -> Secrets als:  OPENSEA_API_KEY = "jouw_key_hier"
@@ -30,13 +28,32 @@ try:
 except Exception:
     OPENSEA_API_KEY = ""
 
-PORTFOLIO_FILE = "portfolio.json"
+# ---------------------------------------------------------------------------
+# Zwart thema + losse "kaartjes" per onderdeel
+# ---------------------------------------------------------------------------
+
+st.markdown("""
+<style>
+.stApp { background-color: #000000; }
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background-color: #111318;
+    border: 1px solid #262a33;
+    border-radius: 12px;
+    padding: 4px 4px 10px 4px;
+}
+div[data-testid="stMetric"] {
+    background-color: #111318;
+    border: 1px solid #262a33;
+    border-radius: 12px;
+    padding: 10px 14px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Universums / vaste lijsten
 # ---------------------------------------------------------------------------
 
-# ~50 grote techbedrijven, gebruikt voor "top 5 tech stijgers"
 TECH_50 = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "ORCL", "CRM",
     "ADBE", "AMD", "INTC", "CSCO", "QCOM", "TXN", "IBM", "NOW", "INTU", "AMAT",
@@ -45,7 +62,6 @@ TECH_50 = [
     "ABNB", "DELL", "HPQ", "HPE", "STX", "WDC", "NXPI", "ON", "MCHP", "APP",
 ]
 
-# Bredere set (tech + andere sectoren), gebruikt voor "top 5 by volume"
 OTHER_LARGE_CAPS = [
     "JPM", "BAC", "WFC", "XOM", "CVX", "JNJ", "PFE", "UNH", "WMT", "PG",
     "KO", "PEP", "DIS", "NKE", "MCD", "HD", "LOW", "V", "MA", "PYPL",
@@ -53,11 +69,32 @@ OTHER_LARGE_CAPS = [
 ]
 STOCK_VOLUME_UNIVERSE = list(dict.fromkeys(TECH_50 + OTHER_LARGE_CAPS))
 
-# Crypto-tickers voor de bovenste banner (CoinGecko id's)
-BANNER_CRYPTO = {"bitcoin": "BTC", "solana": "SOL", "ethereum": "ETH"}
+# Ticker -> domein, gebruikt om het bedrijfslogo op te halen via Clearbit
+TICKER_DOMAINS = {
+    "AAPL": "apple.com", "MSFT": "microsoft.com", "GOOGL": "google.com", "AMZN": "amazon.com",
+    "NVDA": "nvidia.com", "META": "meta.com", "TSLA": "tesla.com", "AVGO": "broadcom.com",
+    "ORCL": "oracle.com", "CRM": "salesforce.com", "ADBE": "adobe.com", "AMD": "amd.com",
+    "INTC": "intel.com", "CSCO": "cisco.com", "QCOM": "qualcomm.com", "TXN": "ti.com",
+    "IBM": "ibm.com", "NOW": "servicenow.com", "INTU": "intuit.com", "AMAT": "appliedmaterials.com",
+    "MU": "micron.com", "ADI": "analog.com", "LRCX": "lamresearch.com", "KLAC": "kla.com",
+    "PANW": "paloaltonetworks.com", "SNPS": "synopsys.com", "CDNS": "cadence.com", "MRVL": "marvell.com",
+    "FTNT": "fortinet.com", "ANSS": "ansys.com", "CRWD": "crowdstrike.com", "WDAY": "workday.com",
+    "TEAM": "atlassian.com", "DDOG": "datadoghq.com", "ZS": "zscaler.com", "NET": "cloudflare.com",
+    "SNOW": "snowflake.com", "PLTR": "palantir.com", "SHOP": "shopify.com", "UBER": "uber.com",
+    "ABNB": "airbnb.com", "DELL": "dell.com", "HPQ": "hp.com", "HPE": "hpe.com",
+    "STX": "seagate.com", "WDC": "westerndigital.com", "NXPI": "nxp.com", "ON": "onsemi.com",
+    "MCHP": "microchip.com", "APP": "applovin.com",
+    "JPM": "jpmorganchase.com", "BAC": "bankofamerica.com", "WFC": "wellsfargo.com", "XOM": "exxonmobil.com",
+    "CVX": "chevron.com", "JNJ": "jnj.com", "PFE": "pfizer.com", "UNH": "unitedhealthgroup.com",
+    "WMT": "walmart.com", "PG": "pg.com", "KO": "coca-cola.com", "PEP": "pepsico.com",
+    "DIS": "disney.com", "NKE": "nike.com", "MCD": "mcdonalds.com", "HD": "homedepot.com",
+    "LOW": "lowes.com", "V": "visa.com", "MA": "mastercard.com", "PYPL": "paypal.com",
+    "F": "ford.com", "GM": "gm.com", "T": "att.com", "VZ": "verizon.com",
+    "BA": "boeing.com", "GE": "ge.com", "CAT": "caterpillar.com",
+}
 
-# NFT-collecties waarover we een top-5-by-volume ranking maken.
-# BAYC, CryptoPunks en CryptoDickbutts krijgen daarnaast altijd hun eigen kaart.
+BANNER_CRYPTO_IDS = ["bitcoin", "solana", "ethereum"]
+
 NFT_COLLECTIONS = {
     "boredapeyachtclub": "BAYC",
     "cryptopunks": "CryptoPunks",
@@ -76,31 +113,28 @@ NFT_COLLECTIONS = {
 NFT_FEATURED_SLUGS = ["boredapeyachtclub", "cryptopunks", "cryptodickbutts-s3"]
 
 # ---------------------------------------------------------------------------
-# Data ophalen — crypto & aandelen
+# Data ophalen
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
 def get_crypto_banner():
-    """Prijs + 24u-verandering voor BTC, SOL, ETH."""
+    """Prijs, 24u-verandering én logo voor BTC, SOL, ETH in één call."""
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={
-                "ids": ",".join(BANNER_CRYPTO.keys()),
-                "vs_currencies": "usd",
-                "include_24hr_change": "true",
-            },
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "ids": ",".join(BANNER_CRYPTO_IDS)},
             timeout=10,
         ).json()
         result = {}
-        for coin_id, label in BANNER_CRYPTO.items():
-            if coin_id in r:
-                result[label] = (r[coin_id]["usd"], r[coin_id].get("usd_24h_change", 0))
-            else:
-                result[label] = (None, None)
+        for coin in r:
+            result[coin["symbol"].upper()] = {
+                "price": coin["current_price"],
+                "change": coin.get("price_change_percentage_24h"),
+                "logo": coin.get("image"),
+            }
         return result
     except Exception:
-        return {label: (None, None) for label in BANNER_CRYPTO.values()}
+        return {}
 
 
 @st.cache_data(ttl=300)
@@ -128,9 +162,8 @@ def get_fear_greed_crypto():
 
 @st.cache_data(ttl=3600)
 def get_fear_greed_stocks():
-    """CNN's Fear & Greed index heeft geen officiële publieke API.
-    Dit gebruikt hun eigen (onofficiële) data-endpoint — kan zonder
-    aankondiging veranderen of tijdelijk niet werken."""
+    """Niet-officiële CNN-databron (geen publieke API beschikbaar) — kan
+    zonder aankondiging veranderen."""
     try:
         r = requests.get(
             "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
@@ -146,7 +179,6 @@ def get_fear_greed_stocks():
 
 @st.cache_data(ttl=900)
 def get_stock_universe_data():
-    """Eén batch-call voor het hele aandelenuniversum: laatste volume + dagverandering."""
     try:
         data = yf.download(
             tickers=STOCK_VOLUME_UNIVERSE,
@@ -174,7 +206,6 @@ def get_stock_universe_data():
 
 @st.cache_data(ttl=900)
 def get_crypto_top100():
-    """Top 100 coins op marktkapitalisatie, met 24u volume en prijsverandering."""
     try:
         r = requests.get(
             "https://api.coingecko.com/api/v3/coins/markets",
@@ -193,31 +224,35 @@ def get_crypto_top100():
 
 
 @st.cache_data(ttl=900)
-def get_btc_vs_nasdaq():
-    """30 dagen Bitcoin vs Nasdaq, beide geïndexeerd als % verandering
-    zodat ze op dezelfde schaal vergelijkbaar zijn."""
+def get_btc_daily_candles():
+    """CoinGecko's gratis market_chart-endpoint geeft geen echte daily-OHLC
+    terug, dus we bouwen dagcandles zelf op uit de ~uurlijkse prijspunten
+    (open = eerste prijs van de dag, close = laatste, high/low = min/max)."""
     try:
-        btc = requests.get(
+        r = requests.get(
             "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
             params={"vs_currency": "usd", "days": 30},
             timeout=10,
         ).json()
-        btc_df = pd.DataFrame(btc["prices"], columns=["ts", "price"])
-        btc_df["date"] = pd.to_datetime(btc_df["ts"], unit="ms").dt.date
-        btc_df = btc_df.groupby("date")["price"].last().reset_index()
-        btc_df["pct"] = (btc_df["price"] / btc_df["price"].iloc[0] - 1) * 100
-
-        nasdaq_hist = yf.Ticker("^IXIC").history(period="1mo")["Close"]
-        nasdaq_pct = (nasdaq_hist / nasdaq_hist.iloc[0] - 1) * 100
-
-        return btc_df["date"], btc_df["pct"], nasdaq_hist.index, nasdaq_pct
+        df = pd.DataFrame(r["prices"], columns=["ts", "price"])
+        df["date"] = pd.to_datetime(df["ts"], unit="ms").dt.date
+        daily = df.groupby("date")["price"].agg(open="first", high="max", low="min", close="last")
+        return daily
     except Exception:
-        return None, None, None, None
+        return pd.DataFrame(columns=["open", "high", "low", "close"])
+
+
+@st.cache_data(ttl=900)
+def get_nasdaq_daily_candles():
+    try:
+        hist = yf.Ticker("^IXIC").history(period="1mo")
+        return hist[["Open", "High", "Low", "Close"]]
+    except Exception:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close"])
 
 
 @st.cache_data(ttl=900)
 def get_nft_stats(eth_usd_price):
-    """OpenSea API v2 — floor price + 24u-volume per collectie."""
     results = {}
     headers = {"accept": "application/json"}
     if OPENSEA_API_KEY:
@@ -236,47 +271,17 @@ def get_nft_stats(eth_usd_price):
                 if interval.get("interval") == "one_day":
                     volume_24h = interval.get("volume")
             results[slug] = {
-                "name": name,
-                "floor_eth": floor_eth,
-                "floor_usd": floor_usd,
-                "volume_24h": volume_24h,
+                "name": name, "floor_eth": floor_eth,
+                "floor_usd": floor_usd, "volume_24h": volume_24h,
             }
         except Exception:
             results[slug] = {"name": name, "floor_eth": None, "floor_usd": None, "volume_24h": None}
     return results
 
 
-def load_portfolio():
-    if os.path.exists(PORTFOLIO_FILE):
-        return json.load(open(PORTFOLIO_FILE))
-    return []
-
-
-def save_portfolio(portfolio):
-    json.dump(portfolio, open(PORTFOLIO_FILE, "w"))
-
-
-@st.cache_data(ttl=300)
-def get_price_for_asset(symbol: str):
-    symbol_clean = symbol.strip().lower()
-    try:
-        r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": symbol_clean, "vs_currencies": "usd"},
-            timeout=10,
-        ).json()
-        if symbol_clean in r:
-            return r[symbol_clean]["usd"]
-    except Exception:
-        pass
-    try:
-        hist = yf.Ticker(symbol.upper()).history(period="1d")
-        if not hist.empty:
-            return hist["Close"].iloc[-1]
-    except Exception:
-        pass
-    return None
-
+# ---------------------------------------------------------------------------
+# Render-helpers
+# ---------------------------------------------------------------------------
 
 def render_gauge(value, label, title):
     fig = go.Figure(go.Indicator(
@@ -295,37 +300,67 @@ def render_gauge(value, label, title):
             ],
         },
     ))
-    fig.update_layout(height=220, margin=dict(l=20, r=20, t=50, b=10), template="plotly_dark")
+    fig.update_layout(height=220, margin=dict(l=20, r=20, t=50, b=10),
+                       template="plotly_dark", paper_bgcolor="#111318")
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_ranked_list(pairs, value_fmt):
-    for i, (name, value) in enumerate(pairs, 1):
-        st.write(f"**{i}. {name}** — {value_fmt(value)}")
+def render_ranked_list(rows):
+    """rows: lijst van dicts met keys name, value, logo (logo mag None zijn)."""
+    for i, row in enumerate(rows, 1):
+        c1, c2 = st.columns([1, 6])
+        if row.get("logo"):
+            try:
+                c1.image(row["logo"], width=24)
+            except Exception:
+                c1.write("•")
+        else:
+            c1.write("•")
+        c2.write(f"**{i}. {row['name']}** — {row['value']}")
 
+
+# ---------------------------------------------------------------------------
+# UI — titel
+# ---------------------------------------------------------------------------
+
+title_col1, title_col2 = st.columns([1, 10])
+with title_col1:
+    st.markdown(
+        "<div style='font-size:42px; text-align:center;'>📊</div>",
+        unsafe_allow_html=True,
+    )  # Placeholder-icoon — zie toelichting in de chat over het logo
+with title_col2:
+    st.title("Markt Overzicht")
+st.caption(f"Laatst bijgewerkt: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
 
 # ---------------------------------------------------------------------------
 # UI — banner
 # ---------------------------------------------------------------------------
 
-st.title("📊 Markt & Portfolio Dashboard")
-st.caption(f"Laatst bijgewerkt: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
-
 crypto_banner = get_crypto_banner()
 sp500, sp500_change = get_index_price("^GSPC")
 
-b1, b2, b3, b4 = st.columns(4)
-b1.metric("S&P 500", f"{sp500:,.0f}" if sp500 else "n.b.",
-          f"{sp500_change:+.2f}%" if sp500_change is not None else None)
-for col, label in zip([b2, b3, b4], ["BTC", "SOL", "ETH"]):
-    price, change = crypto_banner.get(label, (None, None))
-    col.metric(label, f"${price:,.2f}" if price else "n.b.",
-               f"{change:+.2f}%" if change is not None else None)
+banner_cols = st.columns(4)
+
+with banner_cols[0]:
+    with st.container(border=True):
+        st.markdown("**SPX**")
+        st.metric("S&P 500", f"{sp500:,.0f}" if sp500 else "n.b.",
+                   f"{sp500_change:+.2f}%" if sp500_change is not None else None)
+
+for col, symbol in zip(banner_cols[1:], ["BTC", "SOL", "ETH"]):
+    data = crypto_banner.get(symbol, {})
+    with col:
+        with st.container(border=True):
+            if data.get("logo"):
+                st.image(data["logo"], width=28)
+            st.metric(symbol, f"${data['price']:,.2f}" if data.get("price") else "n.b.",
+                      f"{data['change']:+.2f}%" if data.get("change") is not None else None)
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# UI — hoofdrij: links / midden (chart) / rechts
+# UI — hoofdrij: links / midden (candlestick chart) / rechts
 # ---------------------------------------------------------------------------
 
 left_col, center_col, right_col = st.columns([1, 2.2, 1])
@@ -334,63 +369,95 @@ stock_data = get_stock_universe_data()
 crypto_top100 = get_crypto_top100()
 
 with left_col:
-    st.markdown("##### 📈 Top 5 tech stijgers")
-    if not stock_data.empty:
-        tech_df = stock_data[stock_data["ticker"].isin(TECH_50)]
-        top_tech = tech_df.sort_values("pct_change", ascending=False).head(5)
-        render_ranked_list(list(zip(top_tech["ticker"], top_tech["pct_change"])),
-                            lambda v: f"{v:+.2f}%")
-    else:
-        st.write("n.b.")
+    with st.container(border=True):
+        st.markdown("##### 📈 Top 5 tech stijgers")
+        if not stock_data.empty:
+            tech_df = stock_data[stock_data["ticker"].isin(TECH_50)]
+            top_tech = tech_df.sort_values("pct_change", ascending=False).head(5)
+            rows = [{"name": t, "value": f"{p:+.2f}%",
+                     "logo": f"https://logo.clearbit.com/{TICKER_DOMAINS.get(t)}" if TICKER_DOMAINS.get(t) else None}
+                    for t, p in zip(top_tech["ticker"], top_tech["pct_change"])]
+            render_ranked_list(rows)
+        else:
+            st.write("n.b.")
 
-    st.markdown("##### 📊 Top 5 aandelen (volume)")
-    if not stock_data.empty:
-        top_vol = stock_data.sort_values("volume", ascending=False).head(5)
-        render_ranked_list(list(zip(top_vol["ticker"], top_vol["volume"])),
-                            lambda v: f"{v:,.0f}")
-    else:
-        st.write("n.b.")
+    with st.container(border=True):
+        st.markdown("##### 📊 Top 5 aandelen (volume)")
+        if not stock_data.empty:
+            top_vol = stock_data.sort_values("volume", ascending=False).head(5)
+            rows = [{"name": t, "value": f"{v:,.0f}",
+                     "logo": f"https://logo.clearbit.com/{TICKER_DOMAINS.get(t)}" if TICKER_DOMAINS.get(t) else None}
+                    for t, v in zip(top_vol["ticker"], top_vol["volume"])]
+            render_ranked_list(rows)
+        else:
+            st.write("n.b.")
 
-    fng_stocks_value, fng_stocks_label = get_fear_greed_stocks()
-    render_gauge(fng_stocks_value, fng_stocks_label, "Fear & Greed — Aandelen")
+    with st.container(border=True):
+        fng_stocks_value, fng_stocks_label = get_fear_greed_stocks()
+        render_gauge(fng_stocks_value, fng_stocks_label, "Fear & Greed — Aandelen")
 
 with center_col:
-    st.markdown("##### ₿ Bitcoin vs Nasdaq (30 dagen, % verandering)")
-    btc_dates, btc_pct, nasdaq_dates, nasdaq_pct = get_btc_vs_nasdaq()
-    if btc_dates is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=list(btc_dates), y=list(btc_pct), name="Bitcoin",
-                                  line=dict(color="#f2a900", width=2)))
-        fig.add_trace(go.Scatter(x=list(nasdaq_dates), y=list(nasdaq_pct), name="Nasdaq",
-                                  line=dict(color="#00bfff", width=2)))
-        fig.update_layout(template="plotly_dark", height=480,
-                           margin=dict(l=20, r=20, t=20, b=20),
-                           yaxis_title="% verandering", legend=dict(orientation="h", y=1.05))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Grafiekdata niet beschikbaar.")
+    with st.container(border=True):
+        st.markdown("##### ₿ Bitcoin vs Nasdaq — dagcandles")
+        btc_daily = get_btc_daily_candles()
+        nasdaq_daily = get_nasdaq_daily_candles()
+        if not btc_daily.empty and not nasdaq_daily.empty:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(
+                x=btc_daily.index, open=btc_daily["open"], high=btc_daily["high"],
+                low=btc_daily["low"], close=btc_daily["close"], name="Bitcoin",
+                increasing_line_color="#f2a900", decreasing_line_color="#8a5c00",
+                yaxis="y",
+            ))
+            fig.add_trace(go.Candlestick(
+                x=nasdaq_daily.index, open=nasdaq_daily["Open"], high=nasdaq_daily["High"],
+                low=nasdaq_daily["Low"], close=nasdaq_daily["Close"], name="Nasdaq",
+                increasing_line_color="#00bfff", decreasing_line_color="#004a66",
+                yaxis="y2",
+            ))
+            fig.update_layout(
+                template="plotly_dark", height=560, paper_bgcolor="#111318",
+                margin=dict(l=20, r=20, t=20, b=20),
+                yaxis=dict(title="Bitcoin (USD)", side="left"),
+                yaxis2=dict(title="Nasdaq", side="right", overlaying="y"),
+                xaxis_rangeslider_visible=False,
+                legend=dict(orientation="h", y=1.05),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption(
+                "Bitcoin-candles zijn opgebouwd uit uurlijkse koersdata (geen native "
+                "daily-OHLC beschikbaar via de gratis API) — Nasdaq-candles zijn wel "
+                "de officiële dagkoersen."
+            )
+        else:
+            st.write("Grafiekdata niet beschikbaar.")
 
 with right_col:
-    st.markdown("##### 🚀 Top 5 crypto stijgers")
-    if not crypto_top100.empty:
-        top_gainers = crypto_top100.sort_values("price_change_percentage_24h", ascending=False).head(5)
-        render_ranked_list(list(zip(top_gainers["symbol"].str.upper(),
-                                     top_gainers["price_change_percentage_24h"])),
-                            lambda v: f"{v:+.2f}%")
-    else:
-        st.write("n.b.")
+    with st.container(border=True):
+        st.markdown("##### 🚀 Top 5 crypto stijgers")
+        if not crypto_top100.empty:
+            top_gainers = crypto_top100.sort_values("price_change_percentage_24h", ascending=False).head(5)
+            rows = [{"name": s.upper(), "value": f"{p:+.2f}%", "logo": img}
+                    for s, p, img in zip(top_gainers["symbol"], top_gainers["price_change_percentage_24h"],
+                                          top_gainers["image"])]
+            render_ranked_list(rows)
+        else:
+            st.write("n.b.")
 
-    st.markdown("##### 💧 Top 5 munten (volume)")
-    if not crypto_top100.empty:
-        top_vol_crypto = crypto_top100.sort_values("total_volume", ascending=False).head(5)
-        render_ranked_list(list(zip(top_vol_crypto["symbol"].str.upper(),
-                                     top_vol_crypto["total_volume"])),
-                            lambda v: f"${v:,.0f}")
-    else:
-        st.write("n.b.")
+    with st.container(border=True):
+        st.markdown("##### 💧 Top 5 munten (volume)")
+        if not crypto_top100.empty:
+            top_vol_crypto = crypto_top100.sort_values("total_volume", ascending=False).head(5)
+            rows = [{"name": s.upper(), "value": f"${v:,.0f}", "logo": img}
+                    for s, v, img in zip(top_vol_crypto["symbol"], top_vol_crypto["total_volume"],
+                                          top_vol_crypto["image"])]
+            render_ranked_list(rows)
+        else:
+            st.write("n.b.")
 
-    fng_crypto_value, fng_crypto_label = get_fear_greed_crypto()
-    render_gauge(fng_crypto_value, fng_crypto_label, "Fear & Greed — Crypto")
+    with st.container(border=True):
+        fng_crypto_value, fng_crypto_label = get_fear_greed_crypto()
+        render_gauge(fng_crypto_value, fng_crypto_label, "Fear & Greed — Crypto")
 
 st.divider()
 
@@ -405,22 +472,23 @@ if not OPENSEA_API_KEY:
         "Zet 'm in je app-instellingen onder Secrets als OPENSEA_API_KEY."
     )
 
-eth_price = crypto_banner.get("ETH", (None, None))[0]
+eth_price = crypto_banner.get("ETH", {}).get("price")
 nft_stats = get_nft_stats(eth_price)
 
 nft_left, nft_right = st.columns([1.3, 2])
 
 with nft_left:
-    st.markdown("##### Top 5 collecties (24u volume)")
-    ranked = sorted(
-        [v for v in nft_stats.values() if v["volume_24h"] is not None],
-        key=lambda v: v["volume_24h"], reverse=True,
-    )[:5]
-    if ranked:
-        render_ranked_list([(v["name"], v["volume_24h"]) for v in ranked],
-                            lambda v: f"{v:,.1f} ETH")
-    else:
-        st.write("n.b.")
+    with st.container(border=True):
+        st.markdown("##### Top 5 collecties (24u volume)")
+        ranked = sorted(
+            [v for v in nft_stats.values() if v["volume_24h"] is not None],
+            key=lambda v: v["volume_24h"], reverse=True,
+        )[:5]
+        if ranked:
+            rows = [{"name": v["name"], "value": f"{v['volume_24h']:,.1f} ETH", "logo": None} for v in ranked]
+            render_ranked_list(rows)
+        else:
+            st.write("n.b.")
 
 with nft_right:
     st.markdown("##### Uitgelicht")
@@ -429,52 +497,10 @@ with nft_right:
         stats = nft_stats.get(slug, {})
         floor_eth = stats.get("floor_eth")
         floor_usd = stats.get("floor_usd")
-        col.metric(
-            stats.get("name", slug),
-            f"{floor_eth:.3f} ETH" if floor_eth else "n.b.",
-            f"${floor_usd:,.0f}" if floor_usd else None,
-        )
-
-st.divider()
-
-# ---------------------------------------------------------------------------
-# UI — Portfolio
-# ---------------------------------------------------------------------------
-
-st.subheader("💼 Mijn Portfolio")
-
-portfolio = load_portfolio()
-
-with st.form("add_holding", clear_on_submit=True):
-    c1, c2, c3 = st.columns([2, 1, 1])
-    asset = c1.text_input("Asset (bv. bitcoin, AAPL, ethereum)")
-    amount = c2.number_input("Aantal", min_value=0.0, step=0.01, format="%.4f")
-    submitted = c3.form_submit_button("➕ Toevoegen")
-    if submitted and asset and amount > 0:
-        portfolio.append({"asset": asset, "amount": amount})
-        save_portfolio(portfolio)
-        st.rerun()
-
-if portfolio:
-    total_value = 0
-    rows = []
-    for holding in portfolio:
-        price = get_price_for_asset(holding["asset"])
-        value = price * holding["amount"] if price else None
-        if value:
-            total_value += value
-        rows.append({
-            "Asset": holding["asset"],
-            "Aantal": holding["amount"],
-            "Prijs": f"${price:,.2f}" if price else "n.b.",
-            "Waarde": f"${value:,.2f}" if value else "n.b.",
-        })
-
-    st.table(rows)
-    st.metric("Totale portfoliowaarde", f"${total_value:,.2f}")
-
-    if st.button("🗑️ Portfolio legen"):
-        save_portfolio([])
-        st.rerun()
-else:
-    st.info("Nog geen holdings toegevoegd. Vul hierboven een asset en aantal in.")
+        with col:
+            with st.container(border=True):
+                st.metric(
+                    stats.get("name", slug),
+                    f"{floor_eth:.3f} ETH" if floor_eth else "n.b.",
+                    f"${floor_usd:,.0f}" if floor_usd else None,
+                )
