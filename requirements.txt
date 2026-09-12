@@ -1,5 +1,5 @@
-treamlit>=1.32
-requests
-yfinance
-plotly
-pandass
+streamlit==1.38.0
+requests==2.32.3
+yfinance==0.2.40
+plotly==5.24.1
+pandas==2.2.2
